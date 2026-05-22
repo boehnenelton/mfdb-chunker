@@ -1,37 +1,48 @@
 # MFDB Chunker v5.0.0
 **MFDB Spec v1.31 · BEJSON Library Family v2.0.1 OFFICIAL**
-Author: Elton Boehnen · boehnenelton2024.pages.dev · github.com/boehnenelton · boehnenelton2024@gmail.com
+Author: Elton Boehnen · boehnenelton2024.pages.dev · [github.com/boehnenelton/mfdb-chunker](https://github.com/boehnenelton/mfdb-chunker) · boehnenelton2024@gmail.com
+
+---
+
+## Overview
+The **MFDB Chunker** is the authoritative system for converting codebases into AI-optimized, tabular **BEJSON (104/104db)** and **MFDB** formats. Version 5 represents the complete remediation of the BEJSON ecosystem, integrating unified error registries, environment management, and authoritative schema enforcement.
 
 ---
 
 ## What's New in v5.0.0
 
-- **Official BEJSON Library v2.0.1** — all Core libs upgraded to the remediated 2026-05-21 release
-- **`bejson_core_atomic_write` API change** — `create_backup` parameter removed in v2.0.1; all call sites updated
-- **New libs included:** `lib_bejson_errors.py`, `lib_bejson_env.py`, `lib_bejson_schema.py`, `lib_bejson_state_management.py`, `lib_mfdb_extensions.py`
-- **Stale-lock override** — `bejson_core_acquire_lock` now auto-clears locks older than 60s (remediated in v2.0.1)
-- **Unified error code registry** — all error codes now come from `lib_bejson_errors.py` (codes 1–289)
+- **Authoritative Repository** — Moved to [boehnenelton/mfdb-chunker](https://github.com/boehnenelton/mfdb-chunker).
+- **Official BEJSON Library v2.0.1** — All Core libs upgraded to the remediated 2026-05-21 release.
+- **Unified Schema Registry** — Integrated `lib_bejson_schema.py` for rigid validation of Chunker v5 entities and manifests.
+- **Environment Awareness** — Uses `lib_bejson_env.py` to resolve paths via the MFDB Layer Registry.
+- **Stale-lock Override** — `bejson_core_acquire_lock` now auto-clears locks older than 60s.
+- **Unified Error Codes** — All system events mapped to the BEJSON Unified Error Registry (codes 1–289).
 
 ---
 
 ## Usage
 
-### Flask UI
+### Flask UI (Desktop/Mobile)
 ```bash
 python mfdb_chunker_app.py
 ```
-Auto-selects a free port (5100–5120). `use_reloader=False` — no Inception loop.
+Auto-selects a free port (5100–5120). UI provides a dashboard for visual project selection, version bumping, and chunking operations.
 
 ### CLI
 ```bash
+# Chunk a project
 python mfdb_chunker.py --chunk  ./MyProject
+
+# Chunk with metadata
 python mfdb_chunker.py --chunk  ./MyProject --changelog "Fix" --tags "stable,release"
+
+# Versioning
 python mfdb_chunker.py --bump   ./MyProject --bump-part minor
+
+# Operations
 python mfdb_chunker.py --list   ./output/MyProject_MFDB/104a.mfdb.bejson
 python mfdb_chunker.py --unchunk ./output/MyProject_MFDB/104a.mfdb.bejson --version 1.0.0
-python mfdb_chunker.py --prune  ./output/MyProject_MFDB/104a.mfdb.bejson --version 1.0.0
 python mfdb_chunker.py --export ./output/MyProject_MFDB/104a.mfdb.bejson --version 1.0.0 --out ./v1.mfdb.zip
-python mfdb_chunker.py --import ./output/MyProject_MFDB/104a.mfdb.bejson --zip ./v1.mfdb.zip
 ```
 
 ---
@@ -61,4 +72,5 @@ mfdb_chunker/
     └── lib_mfdb_extensions.py       v2.0.1 OFFICIAL  ← NEW
 ```
 
-Python 3.10+ · `pip install flask` for the UI.
+---
+*Created by Elton Boehnen | 2026-05-21*
