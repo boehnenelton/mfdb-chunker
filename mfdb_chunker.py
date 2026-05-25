@@ -9,12 +9,15 @@
 #===============================================================================
 <!--
 FILE:        mfdb_chunker.py
-VERSION:     5.0.0
+VERSION:     6.0.0
              Architecture v2: one entity file per project holds ALL versions
              as rows (distinguished by 'version' field). The manifest tracks
              per-version metadata. Export/import packages are self-contained zips.
 COMPLIANCE:  MFDB Spec v1.31 | BEJSON Formats: 104 · 104a
 CHANGELOG:
+  6.0.0 - Integrated Snapshot Backups for point-in-time recovery.
+          Added DB Integrity Validation (--validate).
+          UI: Added Project Removal and File Tree Preview.
   5.0.0 - Upgraded to official BEJSON Library v2.0.1 (MFDB 1.31).
           Removed create_backup kwarg (no longer in bejson_core_atomic_write v2.0.1).
           Added: lib_bejson_errors.py, lib_bejson_env.py, lib_bejson_schema.py,
@@ -69,6 +72,7 @@ DEFAULT_CONFIG = {
     "output_base":              str(BASE_DIR / "output"),
     "include_binary_base64":    False,
 }
+TEMPLATE_META_FILE = "__template_meta__.json"
 
 # Manifest: one row per version. Tags stored as comma-separated string (104a primitive constraint).
 MANIFEST_FIELDS = [
@@ -209,6 +213,35 @@ def get_entity_path(config: dict) -> Path:
     return get_mfdb_dir(config) / "data" / f"{sanitize_name(config['project_name'])}.bejson"
 
 
+def get_templates_dir(config: dict) -> Path:
+    return get_mfdb_dir(config) / "templates"
+
+
+def safe_extract_zip(zip_file: zipfile.ZipFile, output_dir: Path) -> None:
+    output_dir = output_dir.resolve()
+    for member in zip_file.infolist():
+        member_path = (output_dir / member.filename).resolve()
+        if not str(member_path).startswith(str(output_dir)):
+            raise ValueError(f"Unsafe zip path blocked: {member.filename}")
+    zip_file.extractall(str(output_dir))
+
+
+def collect_project_files(target_path: Path, config: dict) -> list[Path]:
+    exts = set(config["extensions"])
+    excludes = set(config["exclude_dirs"])
+    files: list[Path] = []
+    for root, dirs, filenames in os.walk(target_path):
+        dirs[:] = [d for d in dirs if d not in excludes]
+        for file_name in sorted(filenames):
+            file_path = Path(root) / file_name
+            if file_name == "chunker_config.json":
+                continue
+            if file_path.suffix.lower() not in exts:
+                continue
+            files.append(file_path)
+    return files
+
+
 # ---------------------------------------------------------------------------
 # Manifest management
 # ---------------------------------------------------------------------------
@@ -293,6 +326,96 @@ def _remove_version_rows(entity_doc: dict, entity_name: str) -> int:
 # Public API
 # ---------------------------------------------------------------------------
 
+
+def do_validate(manifest_path_arg: str) -> dict:
+    """Verify MFDB integrity: manifest existence, entity files, and row counts."""
+    manifest_path = Path(manifest_path_arg).resolve()
+    if not manifest_path.exists():
+        return {"ok": False, "message": "Manifest not found."}
+    
+    errors = []
+    try:
+        manifest_doc = BEJSONCore.bejson_core_load_file(str(manifest_path))
+        m_fields = [f["name"] for f in manifest_doc["Fields"]]
+        en_idx = m_fields.index("entity_name")
+        fp_idx = m_fields.index("file_path")
+        rc_idx = m_fields.index("record_count")
+
+        for row in manifest_doc["Values"]:
+            if row is None or not any(row): continue
+            if row is None or not any(row): continue
+            v_name = row[en_idx]
+            e_rel = row[fp_idx]
+            e_count = row[rc_idx]
+            e_abs = manifest_path.parent / e_rel
+            
+            if not e_abs.exists():
+                errors.append(f"Version {v_name}: Entity file missing: {e_rel}")
+                continue
+            
+            try:
+                entity_doc = BEJSONCore.bejson_core_load_file(str(e_abs))
+                actual_count = len(_get_version_rows(entity_doc, v_name))
+                if actual_count != e_count:
+                    errors.append(f"Version {v_name}: Count mismatch. Manifest={e_count}, Entity={actual_count}")
+            except Exception as e:
+                errors.append(f"Version {v_name}: Error reading entity: {e}")
+        
+        if errors:
+            return {"ok": False, "message": f"Validation failed with {len(errors)} errors.", "errors": errors}
+        return {"ok": True, "message": "MFDB INTEGRITY VERIFIED (OK)"}
+    except Exception as e:
+        return {"ok": False, "message": f"Validation error: {e}"}
+
+def do_snapshot(target_dir: str) -> dict:
+    """Create a full zip snapshot of the MFDB directory."""
+    target_path = Path(target_dir).resolve()
+    config = load_or_create_config(target_path)
+    mfdb_dir = get_mfdb_dir(config)
+    
+    if not mfdb_dir.exists():
+        return {"ok": False, "message": "MFDB directory not found. Chunk first."}
+    
+    snapshots_dir = mfdb_dir / "snapshots"
+    snapshots_dir.mkdir(exist_ok=True)
+    
+    ts = get_timestamp()
+    zip_name = f"snapshot_{config['project_name']}_{ts}.zip"
+    zip_path = snapshots_dir / zip_name
+    
+    try:
+        with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, _, filenames in os.walk(mfdb_dir):
+                if "snapshots" in root: continue
+                for filename in filenames:
+                    abs_path = Path(root) / filename
+                    rel_path = abs_path.relative_to(mfdb_dir)
+                    zf.write(str(abs_path), str(rel_path))
+        return {
+            "ok": True, 
+            "message": f"SNAPSHOT CREATED: {zip_name}", 
+            "zip_path": str(zip_path)
+        }
+    except Exception as e:
+        return {"ok": False, "message": f"Snapshot failed: {e}"}
+
+def get_version_files(manifest_path_arg: str, version: str) -> list:
+    """Return list of file paths in a given version."""
+    manifest_path = Path(manifest_path_arg).resolve()
+    entity_name = version_to_entity_name(version)
+    try:
+        manifest_doc = BEJSONCore.bejson_core_load_file(str(manifest_path))
+        m_fields = [f["name"] for f in manifest_doc["Fields"]]
+        fp_idx = m_fields.index("file_path")
+        en_idx = m_fields.index("entity_name")
+        row = next((r for r in manifest_doc["Values"] if r and any(r) and r[en_idx] == entity_name), None)
+        if not row: return []
+        entity_abs = manifest_path.parent / row[fp_idx]
+        entity_doc = BEJSONCore.bejson_core_load_file(str(entity_abs))
+        rows = _get_version_rows(entity_doc, entity_name)
+        return [{"path": r[E_FILE_PATH], "name": r[E_FILE_NAME], "binary": r[E_IS_BINARY]} for r in rows if r and any(r)]
+    except: return []
+
 def list_versions(manifest_path: str) -> list[dict]:
     try:
         doc    = BEJSONCore.bejson_core_load_file(manifest_path)
@@ -328,8 +451,6 @@ def do_chunk(target_dir: str, changelog: str = "",
         return {"ok": False, "message": f"Not a directory: {target_dir}", "detail": {}}
 
     config         = load_or_create_config(target_path)
-    exts           = set(config["extensions"])
-    excludes       = set(config["exclude_dirs"])
     version        = config["version"]
     entity_name    = version_to_entity_name(version)
     incl_b64       = config.get("include_binary_base64", False)
@@ -357,28 +478,21 @@ def do_chunk(target_dir: str, changelog: str = "",
     file_count = 0
     skipped    = []
 
-    for root, dirs, files in os.walk(target_path):
-        dirs[:] = [d for d in dirs if d not in excludes]
-        for file in sorted(files):
-            f_path = Path(root) / file
-            if f_path.suffix.lower() not in exts:
-                continue
-            if file == "chunker_config.json":
-                continue
-            try:
-                rel_path = str(f_path.relative_to(target_path))
-                binary   = is_binary(f_path)
-                is_b64   = False
-                if binary and incl_b64:
-                    raw     = f_path.read_bytes()
-                    content = base64.b64encode(raw).decode("ascii")
-                    is_b64  = True
-                else:
-                    content = "" if binary else f_path.read_text(encoding="utf-8")
-                new_rows.append([entity_name, rel_path, file, content, binary, is_b64])
-                file_count += 1
-            except Exception as e:
-                skipped.append(f"{file}: {e}")
+    for f_path in collect_project_files(target_path, config):
+        try:
+            rel_path = str(f_path.relative_to(target_path))
+            binary   = is_binary(f_path)
+            is_b64   = False
+            if binary and incl_b64:
+                raw     = f_path.read_bytes()
+                content = base64.b64encode(raw).decode("ascii")
+                is_b64  = True
+            else:
+                content = "" if binary else f_path.read_text(encoding="utf-8")
+            new_rows.append([entity_name, rel_path, f_path.name, content, binary, is_b64])
+            file_count += 1
+        except Exception as e:
+            skipped.append(f"{f_path.name}: {e}")
 
     entity_doc["Values"].extend(new_rows)
     _write_entity(entity_path, entity_doc)
@@ -410,6 +524,115 @@ def do_chunk(target_dir: str, changelog: str = "",
             "manifest":    manifest_path,
         },
     }
+
+
+def do_chunk_template(target_dir: str, template_name: str = "") -> dict:
+    """
+    Create a reusable template snapshot zip in:
+      <output>/<project>_MFDB/templates/
+    Template can be restored later with do_unchunk_template.
+    """
+    target_path = Path(target_dir).resolve()
+    if not target_path.is_dir():
+        return {"ok": False, "message": f"Not a directory: {target_dir}", "template_path": ""}
+
+    config = load_or_create_config(target_path)
+    templates_dir = get_templates_dir(config)
+    templates_dir.mkdir(parents=True, exist_ok=True)
+
+    files_to_pack = collect_project_files(target_path, config)
+    if not files_to_pack:
+        return {"ok": False, "message": "No files matched chunker config filters.", "template_path": ""}
+
+    base_name = sanitize_name(template_name.strip()) if template_name else ""
+    if not base_name:
+        base_name = f"{sanitize_name(config['project_name'])}_{version_to_entity_name(config['version'])}"
+    zip_name = f"{base_name}.template.zip"
+    zip_path = templates_dir / zip_name
+    if zip_path.exists():
+        zip_name = f"{base_name}_{get_timestamp()}.template.zip"
+        zip_path = templates_dir / zip_name
+
+    meta = {
+        "template_name": base_name,
+        "project_name": config["project_name"],
+        "project_version": config["version"],
+        "created_at": now_iso(),
+        "source_dir": str(target_path),
+        "file_count": len(files_to_pack),
+        "extensions": list(config.get("extensions", [])),
+    }
+
+    try:
+        with zipfile.ZipFile(str(zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(TEMPLATE_META_FILE, json.dumps(meta, indent=2, ensure_ascii=False))
+            for file_path in files_to_pack:
+                rel_path = str(file_path.relative_to(target_path))
+                zf.write(str(file_path), rel_path)
+        return {
+            "ok": True,
+            "message": f"TEMPLATE CHUNKED: {zip_name}",
+            "template_path": str(zip_path),
+            "file_count": len(files_to_pack),
+        }
+    except Exception as e:
+        return {"ok": False, "message": str(e), "template_path": ""}
+
+
+def do_unchunk_template(target_dir: str, template_name: str = "", out_dir: str = "") -> dict:
+    """
+    Restore a template snapshot zip from:
+      <output>/<project>_MFDB/templates/
+    If template_name is empty, restores the latest template zip.
+    """
+    target_path = Path(target_dir).resolve()
+    if not target_path.is_dir():
+        return {"ok": False, "message": f"Not a directory: {target_dir}", "out_dir": ""}
+
+    config = load_or_create_config(target_path)
+    templates_dir = get_templates_dir(config)
+    if not templates_dir.exists():
+        return {"ok": False, "message": f"Templates directory not found: {templates_dir}", "out_dir": ""}
+
+    selected_zip: Path | None = None
+    if template_name:
+        candidate = Path(template_name)
+        if candidate.exists() and candidate.is_file():
+            selected_zip = candidate.resolve()
+        else:
+            normalized = sanitize_name(template_name.strip())
+            if normalized.endswith(".template.zip"):
+                expected = templates_dir / normalized
+            else:
+                expected = templates_dir / f"{normalized}.template.zip"
+            if expected.exists():
+                selected_zip = expected
+    if selected_zip is None:
+        all_templates = sorted(templates_dir.glob("*.template.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not all_templates:
+            return {"ok": False, "message": "No template zips found.", "out_dir": ""}
+        selected_zip = all_templates[0]
+
+    if out_dir:
+        output_path = Path(out_dir).resolve()
+    else:
+        output_path = get_mfdb_dir(config).parent / "unchunked_templates" / f"{sanitize_name(config['project_name'])}_{selected_zip.stem}_{get_timestamp()}"
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with zipfile.ZipFile(str(selected_zip), "r") as zf:
+            safe_extract_zip(zf, output_path)
+        meta_path = output_path / TEMPLATE_META_FILE
+        if meta_path.exists():
+            meta_path.unlink()
+        return {
+            "ok": True,
+            "message": f"TEMPLATE RESTORED: {selected_zip.name}",
+            "out_dir": str(output_path),
+            "template_path": str(selected_zip),
+        }
+    except Exception as e:
+        return {"ok": False, "message": str(e), "out_dir": ""}
 
 
 def do_bump(target_dir: str, part: str = "patch") -> dict:
@@ -549,8 +772,7 @@ def do_prune(manifest_path_arg: str, version: str) -> dict:
         manifest_doc = BEJSONCore.bejson_core_load_file(str(manifest_path))
 
         # Find the manifest row
-        target_row = next((r for r in manifest_doc["Values"]
-                           if r[M_ENTITY_NAME] == entity_name), None)
+        target_row = next((r for r in manifest_doc["Values"] if r and any(r) and r[M_ENTITY_NAME] == entity_name), None)
         if target_row is None:
             return {"ok": False, "message": f"Version '{version}' not found in manifest."}
 
@@ -591,8 +813,7 @@ def do_export(manifest_path_arg: str, version: str, out_path: str) -> dict:
     try:
         manifest_doc = BEJSONCore.bejson_core_load_file(str(manifest_path))
 
-        target_row = next((r for r in manifest_doc["Values"]
-                           if r[M_ENTITY_NAME] == entity_name), None)
+        target_row = next((r for r in manifest_doc["Values"] if r and any(r) and r[M_ENTITY_NAME] == entity_name), None)
         if target_row is None:
             return {"ok": False, "message": f"Version '{version}' not found.", "zip_path": ""}
 
@@ -757,6 +978,8 @@ def main() -> None:
         epilog="""
 Examples:
   python mfdb_chunker.py --chunk  ./MyProject --changelog "Fix auth" --tags "stable,release"
+  python mfdb_chunker.py --chunk-template ./MyProject --template-name sprint_baseline
+  python mfdb_chunker.py --unchunk-template ./MyProject --template-name sprint_baseline
   python mfdb_chunker.py --bump   ./MyProject --bump-part minor
   python mfdb_chunker.py --list   ./output/MyProject_MFDB/104a.mfdb.bejson
   python mfdb_chunker.py --unchunk ./output/MyProject_MFDB/104a.mfdb.bejson --version 1.0.0
@@ -767,14 +990,22 @@ Examples:
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--chunk",    metavar="DIR")
+    group.add_argument("--chunk-template", metavar="DIR")
     group.add_argument("--unchunk",  metavar="MANIFEST")
+    group.add_argument("--unchunk-template", metavar="DIR")
     group.add_argument("--list",     metavar="MANIFEST")
     group.add_argument("--bump",     metavar="DIR")
     group.add_argument("--prune",    metavar="MANIFEST")
     group.add_argument("--export",   metavar="MANIFEST")
     group.add_argument("--import",   metavar="MANIFEST", dest="import_manifest")
+    group.add_argument("--validate", metavar="MANIFEST")
+    group.add_argument("--snapshot", metavar="DIR")
 
     parser.add_argument("--version",     metavar="VER")
+    parser.add_argument("--template-name", metavar="NAME",
+                        help="Template name for --chunk-template / --unchunk-template")
+    parser.add_argument("--template-out", metavar="PATH",
+                        help="Output path for --unchunk-template")
     parser.add_argument("--changelog",   metavar="TEXT",  default="")
     parser.add_argument("--tags",        metavar="TAGS",  default="",
                         help="Comma-separated tags e.g. 'stable,release'")
@@ -799,6 +1030,21 @@ Examples:
             print(f"  Entity  : {d['entity_path']}")
             if d["skipped"]:
                 print(f"  Skipped : {d['skipped']}")
+
+    elif args.chunk_template:
+        r = do_chunk_template(args.chunk_template, args.template_name or "")
+        print(f"[{'OK' if r['ok'] else 'ERROR'}] {r['message']}")
+        if r["ok"]:
+            print(f"  Template: {r['template_path']}")
+            print(f"  Files   : {r['file_count']}")
+
+    elif args.unchunk_template:
+        r = do_unchunk_template(args.unchunk_template, args.template_name or "",
+                                args.template_out or "")
+        print(f"[{'OK' if r['ok'] else 'ERROR'}] {r['message']}")
+        if r["ok"]:
+            print(f"  Template: {r['template_path']}")
+            print(f"  Output  : {r['out_dir']}")
 
     elif args.unchunk:
         if not args.version:
@@ -840,6 +1086,18 @@ Examples:
             print(f"  Imported: {', '.join(r['imported'])}")
         if r["skipped"]:
             print(f"  Skipped : {', '.join(r['skipped'])}")
+
+
+    elif args.validate:
+        r = do_validate(args.validate)
+        print(f"[{'OK' if r['ok'] else 'ERROR'}] {r['message']}")
+        if not r['ok'] and 'errors' in r:
+            for err in r['errors']: print(f"  - {err}")
+
+    elif args.snapshot:
+        r = do_snapshot(args.snapshot)
+        print(f"[{'OK' if r['ok'] else 'ERROR'}] {r['message']}")
+        if r['ok']: print(f"  Zip: {r['zip_path']}")
 
     elif args.list:
         versions = list_versions(args.list)

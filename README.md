@@ -1,4 +1,4 @@
-# MFDB Chunker v5.0.0
+# MFDB Chunker v6.0.0
 **MFDB Spec v1.31 · BEJSON Library Family v2.0.1 OFFICIAL**
 Author: Elton Boehnen · boehnenelton2024.pages.dev · [github.com/boehnenelton/mfdb-chunker](https://github.com/boehnenelton/mfdb-chunker) · boehnenelton2024@gmail.com
 
@@ -9,6 +9,14 @@ The **MFDB Chunker** is the authoritative system for converting codebases into A
 
 ---
 
+## What's New in v6.0.0
+
+- **Integrated Snapshot Backups** — Create point-in-time zip backups of the entire MFDB project directory for secondary archival safety.
+- **DB Integrity Validation** — Automated manifest/entity cross-check to detect row count mismatches or missing data files.
+- **UI: File Tree Preview** — Inspect the contents of a chunked version (file paths, types) without unchunking to disk.
+- **UI: Project Removal** — Cleanly remove stale project references from the sidebar dashboard.
+- **Enhanced GUI** — Improved mobile responsiveness and larger, more accessible sidebar controls.
+
 ## What's New in v5.0.0
 
 - **Authoritative Repository** — Moved to [boehnenelton/mfdb-chunker](https://github.com/boehnenelton/mfdb-chunker).
@@ -17,6 +25,13 @@ The **MFDB Chunker** is the authoritative system for converting codebases into A
 - **Environment Awareness** — Uses `lib_bejson_env.py` to resolve paths via the MFDB Layer Registry.
 - **Stale-lock Override** — `bejson_core_acquire_lock` now auto-clears locks older than 60s.
 - **Unified Error Codes** — All system events mapped to the BEJSON Unified Error Registry (codes 1–289).
+
+---
+
+## Coming Soon
+
+- **MFDB Snapshot Backups** — point-in-time snapshot packs for fast rollback safety.
+- **Time Machine Restoration** — restore database state to selected historical checkpoints.
 
 ---
 
@@ -43,6 +58,10 @@ python mfdb_chunker.py --bump   ./MyProject --bump-part minor
 python mfdb_chunker.py --list   ./output/MyProject_MFDB/104a.mfdb.bejson
 python mfdb_chunker.py --unchunk ./output/MyProject_MFDB/104a.mfdb.bejson --version 1.0.0
 python mfdb_chunker.py --export ./output/MyProject_MFDB/104a.mfdb.bejson --version 1.0.0 --out ./v1.mfdb.zip
+
+# Template snapshots (stored in output/<project>_MFDB/templates/)
+python mfdb_chunker.py --chunk-template ./MyProject --template-name baseline_ui
+python mfdb_chunker.py --unchunk-template ./MyProject --template-name baseline_ui
 ```
 
 ---

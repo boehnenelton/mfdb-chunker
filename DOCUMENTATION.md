@@ -1,5 +1,5 @@
 # MFDB Chunker — Full Documentation
-**Version 5.0.0 · MFDB Spec v1.31 · BEJSON Library Family v2.0.1 OFFICIAL**
+**Version 6.0.0 · MFDB Spec v1.31 · BEJSON Library Family v2.0.1 OFFICIAL**
 Author: Elton Boehnen · boehnenelton2024.pages.dev · github.com/boehnenelton · boehnenelton2024@gmail.com
 
 ---
@@ -177,6 +177,24 @@ python mfdb_chunker.py --chunk ./BEChat
 python mfdb_chunker.py --chunk ./BEChat --changelog "Fixed auth bug" --tags "stable,release"
 ```
 
+### --chunk-template
+
+```bash
+python mfdb_chunker.py --chunk-template ./BEChat --template-name baseline_ui
+```
+
+Creates a reusable template zip under:
+`output/BEChat_MFDB/templates/`
+
+### --unchunk-template
+
+```bash
+python mfdb_chunker.py --unchunk-template ./BEChat --template-name baseline_ui
+python mfdb_chunker.py --unchunk-template ./BEChat --template-out ./restore_from_template
+```
+
+Restores a template zip to disk. If `--template-name` is omitted, the latest template zip is restored.
+
 ### --bump
 
 ```bash
@@ -220,13 +238,17 @@ python mfdb_chunker.py --import ./output/BEChat_MFDB/104a.mfdb.bejson --zip ./v1
 | Flag | Arg | Description |
 |---|---|---|
 | `--chunk` | `DIR` | Pack project as new version |
+| `--chunk-template` | `DIR` | Create reusable template zip in project MFDB `templates/` subdir |
 | `--bump` | `DIR` | Bump version in config |
 | `--list` | `MANIFEST` | List all versions |
 | `--unchunk` | `MANIFEST` | Restore a version |
+| `--unchunk-template` | `DIR` | Restore from template zip (latest or named) |
 | `--prune` | `MANIFEST` | Delete a version permanently |
 | `--export` | `MANIFEST` | Export a version as zip |
 | `--import` | `MANIFEST` | Import from a zip |
 | `--version` | `VER` | Target version |
+| `--template-name` | `NAME` | Template name for template chunk/restore |
+| `--template-out` | `PATH` | Restore output directory for `--unchunk-template` |
 | `--changelog` | `TEXT` | Release notes (for `--chunk`) |
 | `--tags` | `TAGS` | Comma-separated tags |
 | `--bump-part` | `PART` | `patch` / `minor` / `major` |
@@ -543,6 +565,9 @@ Before restoring, show a collapsible tree of all files in that version with file
 **Diff View**
 Compare two versions side-by-side. Show files added, removed, changed (by content hash). Line-level diff is a stretch goal; file-level is straightforward.
 
+**MFDB Snapshot Backups (Coming Soon)**
+Point-in-time snapshot packs for fast rollback safety and archival checkpoints.
+
 **Selective Restore**
 Pick specific files from the tree preview to restore. Useful for cherry-picking one file from an older version without overwriting the rest.
 
@@ -559,6 +584,9 @@ Poll project directory (Termux-compatible). Trigger automatic chunk after deboun
 
 **Search Across Versions**
 Given a search string, scan `content` field across all entity rows. Return matches with version, file path, and line number.
+
+**Time Machine Restoration (Coming Soon)**
+Restore the MFDB to a selected historical checkpoint from snapshot history.
 
 **Federation / Master-Slave**
 Implement MFDB 1.31 `Network_Role` header (already in `mfdb_core_create_database` in v2.0.1). Master node tracks Slave MFDBs. Master UI shows unified version history across nodes.
