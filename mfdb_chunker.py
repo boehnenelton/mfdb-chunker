@@ -446,84 +446,87 @@ def get_manifest_meta(manifest_path: str) -> dict:
 
 def do_chunk(target_dir: str, changelog: str = "",
              tags: str = "") -> dict:
-    target_path = Path(target_dir).resolve()
-    if not target_path.is_dir():
-        return {"ok": False, "message": f"Not a directory: {target_dir}", "detail": {}}
-
-    config         = load_or_create_config(target_path)
-    version        = config["version"]
-    entity_name    = version_to_entity_name(version)
-    incl_b64       = config.get("include_binary_base64", False)
-
-    manifest_path = init_manifest(config)
-
-    if version_exists_in_manifest(manifest_path, entity_name):
+    try:
+        target_path = Path(target_dir).resolve()
+        if not target_path.is_dir():
+            return {"ok": False, "message": f"Not a directory: {target_dir}", "detail": {}}
+    
+        config         = load_or_create_config(target_path)
+        version        = config["version"]
+        entity_name    = version_to_entity_name(version)
+        incl_b64       = config.get("include_binary_base64", False)
+    
+        manifest_path = init_manifest(config)
+    
+        if version_exists_in_manifest(manifest_path, entity_name):
+            return {
+                "ok":      False,
+                "message": f"Version '{version}' already exists. Bump the version first.",
+                "detail":  {},
+            }
+    
+        entity_path      = str(get_entity_path(config))
+        mfdb_dir         = get_mfdb_dir(config)
+        data_dir         = mfdb_dir / "data"
+        parent_hierarchy = os.path.relpath(manifest_path, str(data_dir))
+        entity_rel_path  = f"data/{Path(entity_path).name}"
+    
+        entity_doc = _load_or_create_entity(entity_path, config, parent_hierarchy)
+        if changelog:
+            entity_doc["Changelog_Latest"] = f"[{entity_name}] {changelog}"
+    
+        new_rows   = []
+        file_count = 0
+        skipped    = []
+    
+        for f_path in collect_project_files(target_path, config):
+            try:
+                rel_path = str(f_path.relative_to(target_path))
+                binary   = is_binary(f_path)
+                is_b64   = False
+                if binary and incl_b64:
+                    raw     = f_path.read_bytes()
+                    content = base64.b64encode(raw).decode("ascii")
+                    is_b64  = True
+                else:
+                    content = "" if binary else f_path.read_text(encoding="utf-8")
+                new_rows.append([entity_name, rel_path, f_path.name, content, binary, is_b64])
+                file_count += 1
+            except Exception as e:
+                skipped.append(f"{f_path.name}: {e}")
+    
+        entity_doc["Values"].extend(new_rows)
+        _write_entity(entity_path, entity_doc)
+    
+        # Append manifest row
+        manifest_doc = BEJSONCore.bejson_core_load_file(manifest_path)
+        manifest_doc["Values"].append([
+            entity_name,
+            entity_rel_path,
+            f"Project version {version}",
+            file_count,
+            version,
+            "file_path",
+            changelog or "",
+            now_iso(),
+            tags or "",
+        ])
+        _write_manifest(manifest_path, manifest_doc)
+    
         return {
-            "ok":      False,
-            "message": f"Version '{version}' already exists. Bump the version first.",
-            "detail":  {},
+            "ok":      True,
+            "message": f"VERSION {version} CHUNKED SUCCESSFULLY",
+            "detail":  {
+                "version":     version,
+                "entity_name": entity_name,
+                "file_count":  file_count,
+                "skipped":     skipped,
+                "entity_path": entity_path,
+                "manifest":    manifest_path,
+            },
         }
-
-    entity_path      = str(get_entity_path(config))
-    mfdb_dir         = get_mfdb_dir(config)
-    data_dir         = mfdb_dir / "data"
-    parent_hierarchy = os.path.relpath(manifest_path, str(data_dir))
-    entity_rel_path  = f"data/{Path(entity_path).name}"
-
-    entity_doc = _load_or_create_entity(entity_path, config, parent_hierarchy)
-    if changelog:
-        entity_doc["Changelog_Latest"] = f"[{entity_name}] {changelog}"
-
-    new_rows   = []
-    file_count = 0
-    skipped    = []
-
-    for f_path in collect_project_files(target_path, config):
-        try:
-            rel_path = str(f_path.relative_to(target_path))
-            binary   = is_binary(f_path)
-            is_b64   = False
-            if binary and incl_b64:
-                raw     = f_path.read_bytes()
-                content = base64.b64encode(raw).decode("ascii")
-                is_b64  = True
-            else:
-                content = "" if binary else f_path.read_text(encoding="utf-8")
-            new_rows.append([entity_name, rel_path, f_path.name, content, binary, is_b64])
-            file_count += 1
-        except Exception as e:
-            skipped.append(f"{f_path.name}: {e}")
-
-    entity_doc["Values"].extend(new_rows)
-    _write_entity(entity_path, entity_doc)
-
-    # Append manifest row
-    manifest_doc = BEJSONCore.bejson_core_load_file(manifest_path)
-    manifest_doc["Values"].append([
-        entity_name,
-        entity_rel_path,
-        f"Project version {version}",
-        file_count,
-        version,
-        "file_path",
-        changelog or "",
-        now_iso(),
-        tags or "",
-    ])
-    _write_manifest(manifest_path, manifest_doc)
-
-    return {
-        "ok":      True,
-        "message": f"VERSION {version} CHUNKED SUCCESSFULLY",
-        "detail":  {
-            "version":     version,
-            "entity_name": entity_name,
-            "file_count":  file_count,
-            "skipped":     skipped,
-            "entity_path": entity_path,
-            "manifest":    manifest_path,
-        },
-    }
+    except Exception as e:
+        return {"ok": False, "message": f"CRITICAL CHUNK ERROR: {str(e)}", "detail": {}}
 
 
 def do_chunk_template(target_dir: str, template_name: str = "") -> dict:

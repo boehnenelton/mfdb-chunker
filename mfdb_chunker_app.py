@@ -402,38 +402,65 @@ async function registerProject() {
     } catch(e) { log("NETWORK ERROR", "err"); }
 }
 async function bump(part) {
-  log("BUMPING...", "");
+  log("BUMPING VERSION ("+part+")...", "");
   try {
     const r = await fetch("/api/bump", {
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({project_id: PROJECT_ID, part})
     }).then(r => r.json());
-    if (r.ok) window.location.reload();
-    else log("BUMP FAILED", "err");
-  } catch(e) { log("NETWORK ERROR", "err"); }
+    if (r.ok) {
+      log("VERSION BUMPED SUCCESSFULLY", "ok");
+      setTimeout(() => window.location.reload(), 800);
+    } else {
+      log("BUMP FAILED: " + (r.message || "Unknown error"), "err");
+    }
+  } catch(e) { log("NETWORK ERROR: " + e.message, "err"); }
 }
 async function chunk() {
   const changelog = document.getElementById("changelog").value;
   const tags = document.getElementById("tags").value;
-  log("CHUNKING...", "");
+  log("CHUNKING IN PROGRESS... PLEASE WAIT", "");
+  
+  // Simple "alive" animation
+  let dots = 0;
+  const interval = setInterval(() => {
+    dots = (dots + 1) % 4;
+    log("CHUNKING IN PROGRESS" + ".".repeat(dots), "");
+  }, 500);
+
   try {
     const r = await fetch("/api/chunk", {
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({project_id: PROJECT_ID, changelog, tags})
     }).then(r => r.json());
-    if (r.ok) window.location.reload();
-    else log("CHUNK FAILED: " + r.message, "err");
-  } catch(e) { log("NETWORK ERROR", "err"); }
+    
+    clearInterval(interval);
+    
+    if (r.ok) {
+      log("CHUNKED SUCCESSFULLY!", "ok");
+      setTimeout(() => window.location.reload(), 1500);
+    } else {
+      log("CHUNK FAILED: " + r.message, "err");
+    }
+  } catch(e) { 
+    clearInterval(interval);
+    log("NETWORK ERROR: " + e.message, "err"); 
+  }
 }
 async function restore(ver) {
-  log('RESTORING '+ver+'...', '');
-  const r = await fetch('/api/unchunk', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({project_id: PROJECT_ID, version:ver})
-  }).then(r => r.json());
-  if (r.ok) log('RESTORED TO: ' + r.out_dir, 'ok');
+  log("RESTORING "+ver+"... PLEASE WAIT", "");
+  try {
+    const r = await fetch("/api/unchunk", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({project_id: PROJECT_ID, version:ver})
+    }).then(r => r.json());
+    if (r.ok) {
+      log("RESTORED TO: " + r.out_dir, "ok");
+    } else {
+      log("RESTORE FAILED: " + r.message, "err");
+    }
+  } catch(e) { log("NETWORK ERROR: " + e.message, "err"); }
 }
-
 async function removeProject(e, id) {
     e.stopPropagation();
     if (!confirm('Remove project from UI? (Files on disk will remain)')) return;
