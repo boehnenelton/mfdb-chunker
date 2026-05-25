@@ -1,600 +1,357 @@
-# MFDB Chunker — Full Documentation
-**Version 6.0.0 · MFDB Spec v1.31 · BEJSON Library Family v2.0.1 OFFICIAL**
-Author: Elton Boehnen · boehnenelton2024.pages.dev · github.com/boehnenelton · boehnenelton2024@gmail.com
+# MFDB Chunker v6.0.0 Technical Documentation
+**Relational Archiving & Versioning for the BEJSON Ecosystem**
+**MFDB Spec v1.31 · BEJSON Formats: 104 | 104a | 104db**
+**Author:** Elton Boehnen
+**Status:** OFFICIAL v6.0.0
 
 ---
 
-## Table of Contents
+## 1. Executive Summary
+The **MFDB Chunker** is a high-performance serialization and archiving engine designed to convert complex file systems and codebases into tabular, AI-optimized data formats. Unlike traditional compression tools, the MFDB Chunker prioritizes **relational data integrity**, allowing multiple versions of a codebase to exist as indexed records within a single database file.
 
-1. [Overview](#1-overview)
-2. [Architecture](#2-architecture)
-3. [Installation](#3-installation)
-4. [Configuration Reference](#4-configuration-reference)
-5. [CLI Reference](#5-cli-reference)
-6. [Flask UI Reference](#6-flask-ui-reference)
-7. [Manifest Schema](#7-manifest-schema)
-8. [Entity File Schema](#8-entity-file-schema)
-9. [Library Compatibility](#9-library-compatibility)
-10. [Public API Reference](#10-public-api-reference)
-11. [Error Reference](#11-error-reference)
-12. [Changelog](#12-changelog)
-13. [Suggested Features Roadmap](#13-suggested-features-roadmap)
+Version 6.0.0 represents the definitive release for enterprise-grade maintenance. It introduces point-in-time **Snapshot Backups**, automated **Integrity Validation**, and a refined **Web Dashboard** featuring a professional interactive file selector. This documentation serves as the authoritative guide for developers and system administrators working within the BEJSON ecosystem.
 
 ---
 
-## 1. Overview
+## 2. Core Capabilities
 
-MFDB Chunker is a version-archiving tool built on the BEJSON MFDB 1.31 specification. It packs a project directory into a persistent MFDB (Multi-File Database), tracking every version as rows inside a single project entity file. Any version can be restored to disk at any time.
+### 2.1 Chunking (Serialization)
+Chunking is the process of scanning a target directory and serializing its contents into a BEJSON 104 entity file. 
+- **Recursive Scanning:** Automatically traverses subdirectories while obeying strict exclusion rules defined in `chunker_config.json`.
+- **Lostless Binary Management:** Optional Base64 encoding transforms binary files (images, compiled assets) into text strings, ensuring 100% data fidelity during BEJSON transport.
+- **Positional Integrity:** Every file is mapped to a specific schema index, making it instantly searchable and retrievable by AI agents and relational parsers.
+- **Incremental Appending:** New versions are appended as fresh rows, preserving previous history without file duplication.
+- **Metadata Tagging:** Supports custom tags (e.g., `stable`, `release-candidate`) per version.
 
-It ships as two entry points:
+### 2.2 Unchunking (Restoration)
+Unchunking reverses the serialization process, rebuilding the directory structure on disk from a specific version row in the database.
+- **Point-in-Time Recovery:** Instantly restore any version (e.g., v1.2.4) by querying its semver identifier.
+- **Binary Decoding:** Automatically detects and decodes Base64 strings back into their original binary form.
+- **Surgical Extraction:** The system ensures that only files belonging to the requested version are written, preventing cross-version contamination.
+- **Clean Restores:** The unchunking process ensures that existing files are overwritten or replaced accurately to match the archived state.
 
-- **`mfdb_chunker.py`** — command-line interface. Also importable as a Python module.
-- **`mfdb_chunker_app.py`** — Flask web UI with project mode, changelog, tagging, prune, export, and import.
+### 2.3 Snapshot Backups (v6 Feature)
+The snapshot system creates a self-contained ZIP archive of the entire MFDB project directory (manifest + data). 
+- **Atomic Archives:** Captures the state of the database and its versions at a specific timestamp.
+- **Secondary Safety:** Provides a traditional backup layer on top of the relational archiving system.
+- **Portability:** Snapshots can be moved between machines and re-imported into the Chunker UI.
+- **Timestamped Naming:** Snapshots are automatically named with the current date and time for easy retrieval.
 
-### Key properties
-
-- **One entity file per project** — all versions stored as rows in `data/<project>.bejson`, differentiated by a `version` field. No per-version files, no null-padding.
-- **Manifest is the registry** — `104a.mfdb.bejson` holds one row per version with metadata.
-- **Optional binary encoding** — images and other binary files can be base64-encoded and fully restored on unchunk.
-- **Self-describing** — every entity file carries `Parent_Hierarchy` pointing back to its manifest.
-- **Export/import** — any version can be exported as a portable `.mfdb.zip` and imported into another MFDB.
-
----
-
-## 2. Architecture
-
-### On-disk layout
-
-```
-output/
-└── MyProject_MFDB/
-    ├── 104a.mfdb.bejson          ← Manifest (BEJSON 104a, MFDB 1.31)
-    └── data/
-        └── myproject.bejson      ← ALL versions as rows (BEJSON 104)
-
-unchunked/
-└── MyProject_v1_2_0_<ts>/        ← Restored project files
-
-exports/
-└── MyProject-1.2.0.mfdb.zip      ← Self-contained export packages
-
-projects.json                     ← Flask UI project registry
-chunker_config.json               ← Per-project config (lives in project dir)
-```
-
-### Data flow
-
-```
-Project directory
-      │
-      ▼ --chunk
-  [scan files] ──► [base64-encode binaries?] ──► [append rows to entity file]
-                                                          │
-                                               [append row to manifest]
-
-104a.mfdb.bejson
-      │
-      ▼ --unchunk
-  [read manifest] ──► [filter entity rows by version] ──► [write files to disk]
-                                                           (base64 decoded if is_base64=true)
-```
-
-### MFDB 1.31 compliance
-
-| Requirement | Implementation |
-|---|---|
-| `MFDB_Version: "1.31"` | Set in `init_manifest()` |
-| `Records_Type: ["mfdb"]` in manifest | Set in `init_manifest()` |
-| Custom headers before `Records_Type` | Dict key insertion order enforced |
-| Entity `Records_Type` matches manifest `entity_name` | Both derived from `sanitize_name(project_name)` |
-| `Parent_Hierarchy` relative path in every entity file | `os.path.relpath(manifest, data_dir)` |
-| Entity filename lowercase | `sanitize_name()` enforced |
-| Atomic writes | `bejson_core_atomic_write()` v2.0.1 (temp+rename+fsync) |
-| Dense entity records, no null-padding | One entity type per file |
+### 2.4 Integrity Validation (v6 Feature)
+The validation engine performs a deep semantic scan of the MFDB:
+- **Manifest-to-Entity Mapping:** Ensures every record in the manifest has a corresponding entity file path.
+- **Row Count Verification:** Cross-checks the `record_count` field in the manifest against the actual rows present in the entity file for that version.
+- **Structure Audit:** Verifies that all required BEJSON headers (Format, Format_Version, Records_Type) are intact.
+- **Corruption Detection:** Flags missing files or malformed JSON structures before they cause runtime errors.
+- **Detailed Error Reporting:** Provides specific version and file path info when validation fails.
 
 ---
 
-## 3. Installation
+## 3. Schema Architecture (MFDB Spec v1.31)
 
-### Requirements
+The MFDB (Multifile Database) architecture separates metadata (Manifest) from payload (Entity).
 
-- Python 3.10+
-- `flask` — for the UI only: `pip install flask`
-- All BEJSON libraries included in `lib/` — no other pip dependencies
+### 3.1 The Manifest (`104a.mfdb.bejson`)
+The manifest is a BEJSON 104a document that acts as the relational index for the project. It tracks version metadata but does not store actual file content.
 
-### Package structure
+#### Schema Definition:
+- **entity_name:** Semantic version prefixed with 'v' and underscores (e.g., `v1_2_0`).
+- **file_path:** Path to the entity file relative to the manifest (e.g., `data/myproject.bejson`).
+- **description:** A brief summary of the version.
+- **record_count:** Number of files captured in this version.
+- **schema_version:** The standard semver string (e.g., `1.2.0`).
+- **primary_key:** The field used for indexing (usually `file_path`).
+- **changelog:** User-provided description of changes.
+- **chunked_at:** ISO 8601 timestamp.
+- **tags:** Comma-separated strings for filtering.
 
-```
-mfdb_chunker/
-├── mfdb_chunker.py
-├── mfdb_chunker_app.py
-├── README.md
-├── DOCUMENTATION.md
-└── lib/
-    ├── lib_bejson_core.py           v2.0.1 — Atomic I/O, document factories, lock management
-    ├── lib_bejson_validator.py      v2.0.1 — Structural integrity checker
-    ├── lib_bejson_parse.py          v2.0.1 — Rapid indexing and retrieval engine
-    ├── lib_bejson_errors.py         v2.0.1 — Unified error code registry (codes 1–289)
-    ├── lib_bejson_env.py            v2.0.1 — Path resolution for {SC_ROOT}, {HOME}, etc.
-    ├── lib_bejson_schema.py         v2.0.1 — Schema management and enforcement
-    ├── lib_bejson_state_management.py v2.0.1 — BEJSON 104db state persistence
-    ├── lib_bejson_provider.py       v2.0.1 — Data provider interface
-    ├── lib_bejson_server.py         v2.0.1 — Flask server port management
-    ├── lib_bejson_static_backend.py v2.0.1 — Flat-file persistence layer
-    ├── lib_be_core.py               v2.0.1 — BE system abstractions
-    ├── lib_mfdb_core.py             v2.0.1 — MFDB orchestrator, MFDBArchive, recovery
-    ├── lib_mfdb_validator.py        v2.0.1 — Manifest/entity bidirectional validator
-    └── lib_mfdb_extensions.py       v2.0.1 — Migrations, integrity checks, transforms
-```
-
-No install step. Run from the `mfdb_chunker/` directory.
-
-### Android / Termux note
-
-The Flask UI uses `use_reloader=False` and auto-selects a free port (5100–5120), avoiding port conflicts and the recursive-server-spawn issue. `bejson_core_acquire_lock` in v2.0.1 has a stale-lock override — locks older than 60 seconds are automatically cleared.
-
----
-
-## 4. Configuration Reference
-
-`chunker_config.json` lives in your **project directory**. Auto-created with the directory name as `project_name` on first run.
-
+#### Example:
 ```json
 {
-  "project_name":           "BEChat",
-  "version":                "1.0.0",
-  "extensions": [
-    ".py", ".js", ".ts", ".html", ".css",
-    ".md", ".json", ".sh", ".txt", ".bejson",
-    ".png", ".jpg", ".gif", ".ico", ".webp", ".svg"
-  ],
-  "exclude_dirs": [
-    ".git", "__pycache__", "node_modules",
-    "lib", "output", ".mfdb_lock"
-  ],
-  "output_base":            "./output",
-  "include_binary_base64":  false
-}
-```
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `project_name` | string | Directory name | `DB_Name` and MFDB directory name. Auto-set from folder on first run. |
-| `version` | string | `"1.0.0"` | Current version. Bump before each chunk. |
-| `extensions` | array | See above | File suffixes to include. Case-insensitive. |
-| `exclude_dirs` | array | See above | Directory names to skip. |
-| `output_base` | string | `./output` | Where to create `<project_name>_MFDB/`. |
-| `include_binary_base64` | boolean | `false` | Encode binary files as base64. Decoded on unchunk. |
-
----
-
-## 5. CLI Reference
-
-### --chunk
-
-```bash
-python mfdb_chunker.py --chunk ./BEChat
-python mfdb_chunker.py --chunk ./BEChat --changelog "Fixed auth bug" --tags "stable,release"
-```
-
-### --chunk-template
-
-```bash
-python mfdb_chunker.py --chunk-template ./BEChat --template-name baseline_ui
-```
-
-Creates a reusable template zip under:
-`output/BEChat_MFDB/templates/`
-
-### --unchunk-template
-
-```bash
-python mfdb_chunker.py --unchunk-template ./BEChat --template-name baseline_ui
-python mfdb_chunker.py --unchunk-template ./BEChat --template-out ./restore_from_template
-```
-
-Restores a template zip to disk. If `--template-name` is omitted, the latest template zip is restored.
-
-### --bump
-
-```bash
-python mfdb_chunker.py --bump ./BEChat
-python mfdb_chunker.py --bump ./BEChat --bump-part minor   # patch | minor | major
-```
-
-### --list
-
-```bash
-python mfdb_chunker.py --list ./output/BEChat_MFDB/104a.mfdb.bejson
-```
-
-### --unchunk
-
-```bash
-python mfdb_chunker.py --unchunk ./output/BEChat_MFDB/104a.mfdb.bejson --version 1.2.0
-```
-
-### --prune
-
-```bash
-python mfdb_chunker.py --prune ./output/BEChat_MFDB/104a.mfdb.bejson --version 1.0.0
-```
-
-### --export
-
-```bash
-python mfdb_chunker.py --export ./output/BEChat_MFDB/104a.mfdb.bejson --version 1.2.0 --out ./v1.2.0.mfdb.zip
-```
-
-### --import
-
-```bash
-python mfdb_chunker.py --import ./output/BEChat_MFDB/104a.mfdb.bejson --zip ./v1.2.0.mfdb.zip
-python mfdb_chunker.py --import ./output/BEChat_MFDB/104a.mfdb.bejson --zip ./v1.2.0.mfdb.zip --on-conflict prefix
-```
-
-### Full flag reference
-
-| Flag | Arg | Description |
-|---|---|---|
-| `--chunk` | `DIR` | Pack project as new version |
-| `--chunk-template` | `DIR` | Create reusable template zip in project MFDB `templates/` subdir |
-| `--bump` | `DIR` | Bump version in config |
-| `--list` | `MANIFEST` | List all versions |
-| `--unchunk` | `MANIFEST` | Restore a version |
-| `--unchunk-template` | `DIR` | Restore from template zip (latest or named) |
-| `--prune` | `MANIFEST` | Delete a version permanently |
-| `--export` | `MANIFEST` | Export a version as zip |
-| `--import` | `MANIFEST` | Import from a zip |
-| `--version` | `VER` | Target version |
-| `--template-name` | `NAME` | Template name for template chunk/restore |
-| `--template-out` | `PATH` | Restore output directory for `--unchunk-template` |
-| `--changelog` | `TEXT` | Release notes (for `--chunk`) |
-| `--tags` | `TAGS` | Comma-separated tags |
-| `--bump-part` | `PART` | `patch` / `minor` / `major` |
-| `--out` | `PATH` | Output zip path |
-| `--zip` | `PATH` | Source zip path |
-| `--on-conflict` | `MODE` | `reject` or `prefix` |
-
----
-
-## 6. Flask UI Reference
-
-### Starting
-
-```bash
-python mfdb_chunker_app.py
-```
-
-Port auto-selected 5100–5120. `use_reloader=False`.
-
-### Sidebar — Project Mode
-
-Add any number of project directories by absolute path. Each entry shows name, path, and current version. Click to switch.
-
-### Bump Version
-
-PATCH / MINOR / MAJOR buttons. Writes to `chunker_config.json` immediately.
-
-### Chunk
-
-- Changelog textarea and tags field
-- **INCLUDE BINARY AS BASE64** checkbox — encodes images/binaries into the chunk; decoded automatically on unchunk
-- CHUNK button — shows result in status log; table reloads after 1.2s
-
-### Version History Table
-
-Columns: VERSION · FILES · CHUNKED AT · CHANGELOG · TAGS · actions
-
-- **Changelog** — click to edit inline. Enter saves, Escape cancels.
-- **Tags** — ✎ button opens tag modal. Color-coded: `stable`=green, `release`=blue, `hotfix`=orange.
-- **Tag filter** — filter row appears when any tags exist.
-- **RESTORE** — unchunk to disk. Output path in status log.
-- **EXPORT** — export as `.mfdb.zip`. Triggers browser download.
-- **PRUNE** — confirmation modal. Deletes permanently on confirm.
-
-### Import
-
-Drag-and-drop zone. Accepts `.mfdb.zip` exports. Reject or prefix conflict resolution.
-
-### Status Log
-
-ALL CAPS messages at page bottom. Green = success. Red = error.
-
----
-
-## 7. Manifest Schema
-
-`104a.mfdb.bejson` — BEJSON 104a. One row per version.
-
-### Headers (in spec order)
-
-```json
-{
-  "Format":         "BEJSON",
+  "Format": "BEJSON",
   "Format_Version": "104a",
   "Format_Creator": "Elton Boehnen",
-  "MFDB_Version":   "1.31",
-  "DB_Name":        "BEChat",
-  "DB_Description": "Version archive for project: BEChat",
-  "Schema_Version": "1.0.0",
-  "Author":         "Elton Boehnen",
-  "Created_At":     "2026-05-21T12:00:00Z",
-  "Records_Type":   ["mfdb"],
-  "Fields":         [...],
-  "Values":         [...]
+  "MFDB_Version": "1.31",
+  "DB_Name": "MyProject_Manifest",
+  "Network_Role": "Master",
+  "Records_Type": ["mfdb"],
+  "Fields": [
+    {"name": "entity_name",    "type": "string"},
+    {"name": "file_path",      "type": "string"},
+    {"name": "description",    "type": "string"},
+    {"name": "record_count",   "type": "integer"},
+    {"name": "schema_version", "type": "string"},
+    {"name": "primary_key",    "type": "string"},
+    {"name": "changelog",      "type": "string"},
+    {"name": "chunked_at",     "type": "string"},
+    {"name": "tags",           "type": "string"}
+  ],
+  "Values": [
+    [
+      "v1_0_0",
+      "data/myproject.bejson",
+      "Project version 1.0.0",
+      42,
+      "1.0.0",
+      "file_path",
+      "Initial production release",
+      "2026-05-24T12:00:00Z",
+      "stable,release"
+    ],
+    [
+      "v1_1_0",
+      "data/myproject.bejson",
+      "Project version 1.1.0",
+      55,
+      "1.1.0",
+      "file_path",
+      "Added new module x",
+      "2026-05-25T09:30:00Z",
+      "feature"
+    ]
+  ]
 }
 ```
 
-### Fields
+### 3.2 The Entity File (`data/<project>.bejson`)
+The entity file is a BEJSON 104 document that stores the actual file contents. One entity file holds all versions of a project; versions are distinguished by the `version` field in each row. This "Relational Archiving" approach is significantly faster than creating a new file for every version.
 
-| # | Field | Type | Description |
-|---|---|---|---|
-| 0 | `entity_name` | string | e.g. `v1_2_0` |
-| 1 | `file_path` | string | e.g. `data/bechat.bejson` |
-| 2 | `description` | string | Human-readable |
-| 3 | `record_count` | integer | Advisory file count |
-| 4 | `schema_version` | string | Semver, e.g. `1.2.0` |
-| 5 | `primary_key` | string | `"file_path"` |
-| 6 | `changelog` | string | Release notes (editable after chunk) |
-| 7 | `chunked_at` | string | ISO 8601 UTC timestamp |
-| 8 | `tags` | string | Comma-separated tag labels |
-
----
-
-## 8. Entity File Schema
-
-`data/bechat.bejson` — BEJSON 104. One row per (version, file) pair.
-
-### Headers
-
+#### Example:
 ```json
 {
-  "Format":           "BEJSON",
-  "Format_Version":   "104",
-  "Format_Creator":   "Elton Boehnen",
+  "Format": "BEJSON",
+  "Format_Version": "104",
+  "Format_Creator": "Elton Boehnen",
   "Parent_Hierarchy": "../104a.mfdb.bejson",
-  "Records_Type":     ["bechat"],
-  "Fields":           [...],
-  "Values":           [...]
+  "Records_Type": ["ProjectFile"],
+  "Fields": [
+    {"name": "version",   "type": "string"},
+    {"name": "file_path", "type": "string"},
+    {"name": "file_name", "type": "string"},
+    {"name": "content",   "type": "string"},
+    {"name": "is_binary", "type": "boolean"},
+    {"name": "is_base64", "type": "boolean"}
+  ],
+  "Values": [
+    [
+      "v1_0_0",
+      "src/main.py",
+      "main.py",
+      "print('Hello World')",
+      false,
+      false
+    ],
+    [
+      "v1_0_0",
+      "assets/logo.png",
+      "logo.png",
+      "iVBORw0KGgoAAAANSUhEUgAA...",
+      true,
+      true
+    ],
+    [
+      "v1_1_0",
+      "src/main.py",
+      "main.py",
+      "print('Hello Updated World')",
+      false,
+      false
+    ]
+  ]
 }
 ```
 
-### Fields
+### 3.3 Local Configuration (`chunker_config.json`)
+Every project directory contains a local configuration file to define its identity and scanning rules. This file is automatically generated upon first addition but can be customized.
 
-| # | Field | Type | Description |
-|---|---|---|---|
-| 0 | `version` | string | Entity name, e.g. `v1_2_0` |
-| 1 | `file_path` | string | Relative path from project root |
-| 2 | `file_name` | string | Filename only |
-| 3 | `content` | string | UTF-8 text, base64 string, or `""` |
-| 4 | `is_binary` | boolean | True if file could not be read as UTF-8 |
-| 5 | `is_base64` | boolean | True if `content` is base64-encoded binary |
-
-### Binary handling
-
-| `is_binary` | `is_base64` | `content` | Unchunk behavior |
-|---|---|---|---|
-| `false` | `false` | UTF-8 text | Write as text |
-| `true` | `false` | `""` | Create empty placeholder |
-| `true` | `true` | Base64 string | Decode and write raw bytes |
+#### Configuration Fields:
+- **project_name:** The identifier used in filenames and UI.
+- **version:** The current version of the codebase.
+- **extensions:** Whitelist of file types to include (e.g. `[".py", ".js"]`).
+- **exclude_dirs:** Blacklist of directories to ignore (e.g. `[".git", "node_modules"]`).
+- **output_base:** Absolute path where the MFDB files will be stored.
+- **include_binary_base64:** Toggle for lossless binary serialization.
 
 ---
 
-## 9. Library Compatibility
+## 4. Command Line Interface (CLI) Guide
 
-### v5.0.0 Breaking Changes from v4.x
+The `mfdb_chunker.py` script provides a powerful CLI for all core operations. It is designed for both human use and automation via shell scripts.
 
-**`bejson_core_atomic_write` signature changed:**
+### 4.1 Primary Operations
+- `--chunk [DIR]`: Scans the directory and appends it to the MFDB.
+- `--unchunk [MANIFEST] --version [VER]`: Restores the requested version.
+- `--snapshot [DIR]`: Creates a full ZIP backup of the project's MFDB.
+- `--validate [MANIFEST]`: Performs integrity checks.
+- `--list [MANIFEST]`: Displays version history.
 
-```python
-# v4.x (OLD — no longer works)
-BEJSONCore.bejson_core_atomic_write(path, doc, create_backup=False)
+### 4.2 Management Operations
+- `--bump [DIR] --part [patch|minor|major]`: Increments the semantic version in the project's config file.
+- `--prune [MANIFEST] --version [VER]`: Permanently deletes a version record and its data. Use with caution.
+- `--update-changelog [MANIFEST] --version [VER] --msg [TEXT]`: Updates the changelog for a historical version.
 
-# v5.0.0 (NEW — official v2.0.1 API)
-BEJSONCore.bejson_core_atomic_write(path, doc)
-```
-
-The `create_backup` parameter was removed in v2.0.1. The function always writes atomically (temp file + rename + fsync) without creating a backup file.
-
-**New lock API in lib_bejson_core.py v2.0.1:**
-
-```python
-bejson_core_acquire_lock(file_path, timeout=10, stale_age=60)  # returns bool
-bejson_core_release_lock(file_path)
-```
-
-Stale locks (older than `stale_age` seconds) are automatically cleared. This eliminates the Android/Termux freeze caused by orphaned locks.
-
-**New error code registry:**
-
-All error codes are now defined in `lib_bejson_errors.py`. Import pattern:
-
-```python
-from lib_bejson_errors import E_INVALID_JSON, E_MFDB_CORE_ENTITY_NOT_FOUND
-# etc.
-```
-
-Error code ranges:
-- `1–19`: BEJSON Core/Validator
-- `20–29`: BEJSON Core operations
-- `30–49`: MFDB Validator
-- `50–69`: MFDB Core
-- `70–71`: MFDB Archive
-- `270–289`: Cognition
-
-**New validator API:**
-
-`validate_bejson()` is now the canonical entry point, returning a `ValidationResult` dataclass. Compatibility wrappers `bejson_validator_validate_string()` and `bejson_validator_validate_file()` still exist and raise `BEJSONValidationError` on failure.
+### 4.3 Data Portability
+- `--export [MANIFEST] --version [VER]`: Generates a portable `.mfdb.zip` containing only the specific version's data and a valid manifest.
+- `--import [ZIP]`: Integrates an exported version into the current chunker workspace.
 
 ---
 
-## 10. Public API Reference
+## 5. Web Dashboard (The Flask GUI)
 
-All functions are in `mfdb_chunker.py` and are importable.
+The `mfdb_chunker_app.py` provides a high-fidelity visual interface for managing multiple projects. It is built to bridge the gap between complex CLI commands and high-speed developer workflows.
 
-### `do_chunk(target_dir, changelog="", tags="")`
+### 5.1 Project Dashboard
+- **Sidebar Navigation:** A unified panel to switch between local projects and those discovered in the global **MFDB Layer Registry**.
+- **Version History Table:** A high-contrast grid showing all chunked versions, their file counts, dates, and changelogs.
+- **Real-time Feedback:** A status log console at the bottom of the screen provides live updates, "alive" animations, and detailed error messages.
 
-Chunk a project. Reads `include_binary_base64` from config.
+### 5.2 Interactive File Selector (v6 Major Update)
+Ported from the `Component-File_Selector` system, this feature eliminates the need for manual path input.
+- **Visual Browser:** Navigate the internal storage and SD cards using a familiar folder/file interface.
+- **One-Click Selection:** Select a project directory and automatically populate the Add Project form.
+- **Storage Toggles:** Quick-jump buttons for different mount points (Internal vs SD).
 
-```python
-result = do_chunk("/path/to/BEChat", changelog="Fixed auth", tags="stable")
-# {"ok": True, "message": "VERSION 1.2.0 CHUNKED SUCCESSFULLY",
-#  "detail": {"version": "1.2.0", "entity_name": "v1_2_0",
-#             "file_count": 12, "skipped": [], ...}}
-```
-
-### `do_bump(target_dir, part="patch")` → `dict`
-
-```python
-do_bump("/path/to/BEChat", "minor")
-# {"ok": True, "message": "1.2.0 → 1.3.0", "new_version": "1.3.0"}
-```
-
-### `do_unchunk(manifest_path, version)` → `dict`
-
-```python
-do_unchunk("...104a.mfdb.bejson", "1.2.0")
-# {"ok": True, "message": "VERSION 1.2.0 RESTORED TO DISK",
-#  "out_dir": "...", "file_count": 12}
-```
-
-### `do_update_changelog(manifest_path, version, new_changelog)` → `dict`
-
-Edit changelog of an existing version. Does not touch entity file.
-
-### `do_update_tags(manifest_path, version, tags)` → `dict`
-
-Set comma-separated tags on a version in the manifest.
-
-### `do_prune(manifest_path, version)` → `dict`
-
-Atomically remove a version from manifest and entity file.
-
-```python
-do_prune("...104a.mfdb.bejson", "1.0.0")
-# {"ok": True, "message": "VERSION 1.0.0 PRUNED", "rows_removed": 10}
-```
-
-### `do_export(manifest_path, version, out_path)` → `dict`
-
-Export a version as a portable `.mfdb.zip`.
-
-### `do_import(manifest_path, zip_path, on_conflict="reject")` → `dict`
-
-Import versions from an export zip. `on_conflict`: `"reject"` or `"prefix"`.
-
-### `list_versions(manifest_path)` → `list[dict]`
-
-All version rows as field-name-keyed dicts. Empty list on error.
-
-### `get_manifest_meta(manifest_path)` → `dict`
-
-Top-level manifest headers.
-
-### `bump_version(version, part="patch")` → `str`
-
-Pure function. `bump_version("1.2.3", "minor")` → `"1.3.0"`.
-
-### `version_to_entity_name(version)` → `str`
-
-`version_to_entity_name("1.2.3")` → `"v1_2_3"`
+### 5.3 Mobile Optimization & Safe Zones
+- **Responsive Fluidity:** The layout collapses into a single-column view on mobile devices.
+- **Safe Zone Padding:** The UI includes a `100px` bottom offset to account for mobile browser navigation bars and gesture bars.
+- **Touch-Friendly Controls:** Larger button hit-areas and always-visible project removal controls ensure a "perfect" experience on Android tablets and phones.
 
 ---
 
-## 11. Error Reference
+## 6. Technical Workflow Guide
 
-### CLI
+### 6.1 Initializing a Project
+To start tracking a new codebase:
+1. Open the MFDB Chunker Dashboard.
+2. Click **BROWSE** in the sidebar to open the File Selector.
+3. Navigate to your project folder, click **SELECT FOLDER**, then **+ ADD**.
+4. The system will automatically create `chunker_config.json`.
 
-| Message | Fix |
-|---|---|
-| `Version 'x' already exists` | Bump version first |
-| `Manifest not found` | Point to `104a.mfdb.bejson` |
-| `Version 'x' not found in manifest` | Run `--list` to see valid versions |
-| `Entity file missing on disk` | Entity was moved/deleted |
-| `--unchunk requires --version` | Add `--version 1.2.0` |
-| `Zip missing 104a.mfdb.bejson` | Not a valid MFDB export |
-| `CRITICAL: Local libraries not found in lib/` | Keep `lib/` beside `mfdb_chunker.py` |
+### 6.2 The Development & Release Loop
+1. Develop your code as usual.
+2. When a milestone is reached, open the Dashboard.
+3. Type a descriptive **Changelog** (e.g., "Fixed parser timeout").
+4. Click **CHUNK**.
+5. To release a new semantic version (e.g., moving from v1.0.1 to v1.1.0), use the **MINOR** bump button, then chunk.
 
-### Flask UI
-
-| Status | Meaning |
-|---|---|
-| `READY` | No action yet |
-| `VERSION x CHUNKED SUCCESSFULLY` | Chunk complete |
-| `VERSION x RESTORED TO DISK` | Unchunk complete |
-| `VERSION BUMPED: x → y` | Config updated |
-| `VERSION x EXPORTED` | Export zip created |
-| `IMPORT COMPLETE: N imported, N skipped` | Import done |
-| `VERSION x PRUNED` | Delete complete |
-| `ERROR: Version 'x' already exists` | Bump first |
+### 6.3 Maintenance Best Practices
+- **Validation:** Run a **VALIDATE** command after large imports or if you suspect file system corruption.
+- **Snapshots:** Always create a **SNAPSHOT** before using the **PRUNE** command.
+- **Exclusions:** Keep your `exclude_dirs` updated to prevent chunking large, unnecessary assets like `__pycache__` or `build` folders.
+- **SemVer:** Always use consistent semantic versioning to ensure unchunking logic can resolve versions correctly.
 
 ---
 
-## 12. Changelog
+## 7. Compliance & Standards
 
-| Version | Summary |
-|---|---|
-| **5.0.0** | Official BEJSON Library v2.0.1. Removed `create_backup` kwarg. Added `lib_bejson_errors.py`, `lib_bejson_env.py`, `lib_bejson_schema.py`, `lib_bejson_state_management.py`, `lib_mfdb_extensions.py`. Stale-lock override in core. |
-| **4.1.0** | Renamed package folder, documentation updated. |
-| **4.0.0** | Optional base64 binary encoding. `is_base64` field. UI checkbox. |
-| **3.0.0** | `project_name` auto-set from target directory name. |
-| **2.0.0** | Single entity file per project. Version tagging, inline changelog edit, prune, export/import zip. |
-| **1.2.0** | Flask UI, project mode, changelog field, bump/restore buttons. |
-| **1.1.0** | MFDB Spec 1.31 compliance. |
-| **1.0.2** | `create_backup=False` on all atomic writes (pre-v2 API). |
-| **1.0.0** | Initial release. |
+The MFDB Chunker is built to uphold the highest standards of the BEJSON ecosystem.
 
----
+### 7.1 BEJSON Positional Integrity
+The core engine strictly adheres to index-based value mapping. This ensures that every tool in the ecosystem—from Python sub-agents to JavaScript parsers—can read the data without needing complex key-value mapping logic.
+- **Mandate:** Never change the order of fields in `MANIFEST_FIELDS` or `ENTITY_FIELDS`.
+- **Validation:** v6's integrity checker verifies this alignment.
 
-## 13. Suggested Features Roadmap
+### 7.2 MFDB Layer Registry Integration
+The chunker acts as a first-class citizen of the Admin workspace. It proactively synchronizes with the `project.bejson` registry, making your chunked projects discoverable by other system tools and automated auditing scripts.
+- **Automation:** Adding a project in the UI optionally registers it in the global registry.
 
-### Tier 1 — Low effort
-
-**DB Integrity Check (`--validate`)**
-Walk the manifest, verify every `file_path` exists, verify `Parent_Hierarchy` resolves correctly, check row counts against `record_count`. CLI: `--validate <MANIFEST>`. UI: VALIDATE button. Backed by `mfdb_core_deep_verify()` and `mfdb_core_self_heal()` already in `lib_mfdb_core.py` v2.0.1.
-
-**Remove Project from UI**
-Remove button in the sidebar. Deletes from `projects.json` only — does not touch the MFDB on disk.
-
-**File Tree Preview**
-Before restoring, show a collapsible tree of all files in that version with file path, character count, binary flag. No disk writes. Computed by filtering entity rows.
-
-### Tier 2 — Medium effort
-
-**Diff View**
-Compare two versions side-by-side. Show files added, removed, changed (by content hash). Line-level diff is a stretch goal; file-level is straightforward.
-
-**MFDB Snapshot Backups (Coming Soon)**
-Point-in-time snapshot packs for fast rollback safety and archival checkpoints.
-
-**Selective Restore**
-Pick specific files from the tree preview to restore. Useful for cherry-picking one file from an older version without overwriting the rest.
-
-**Stats Dashboard**
-Per-project panel: total versions, total files, total content size, most-changed files, average time between chunks.
-
-**Auto-Chunk Watcher**
-Poll project directory (Termux-compatible). Trigger automatic chunk after debounce delay. Auto-generate changelog like `Auto-chunk: 3 files changed`.
-
-### Tier 3 — Higher effort
-
-**DB Integrity Validation via `lib_mfdb_extensions.py`**
-`mfdb_ext_verify_referential_integrity()` is already implemented in the v2.0.1 lib. Wire it up to a `--validate-fk <MANIFEST>` CLI flag and a UI button to report unresolved `_fk` fields.
-
-**Search Across Versions**
-Given a search string, scan `content` field across all entity rows. Return matches with version, file path, and line number.
-
-**Time Machine Restoration (Coming Soon)**
-Restore the MFDB to a selected historical checkpoint from snapshot history.
-
-**Federation / Master-Slave**
-Implement MFDB 1.31 `Network_Role` header (already in `mfdb_core_create_database` in v2.0.1). Master node tracks Slave MFDBs. Master UI shows unified version history across nodes.
-
-**Self-Healing Import**
-On import, if entity rows fail positional validation, call `mfdb_core_self_heal()` from the v2.0.1 lib to auto-repair before writing.
+### 7.3 Data Privacy & Local-First Philosophy
+All chunking, serialization, and archiving happen locally on your device. No data is transmitted to external servers unless you explicitly push your repository to a remote Git host.
+- **Zero Cloud:** The Flask app runs on `localhost` only.
+- **Lossless:** Base64 encoding ensures no binary data is lost during text-based serialization.
 
 ---
 
-*MFDB Chunker is a project by Elton Boehnen.*
-*boehnenelton2024.pages.dev · github.com/boehnenelton · boehnenelton2024@gmail.com*
+## 8. Advanced Internal Logic
+
+### 8.1 The "Relational" Advantage
+Traditional "chunking" (v1-v4) often created a new file for every version. v5 and v6 use a relational row-based approach. 
+**Scenario:** A project has 100 versions.
+- **Old Way:** 100 separate BEJSON files. Slow to search, heavy on the disk.
+- **New Way (v6):** 1 manifest file + 1 entity file containing all 100 versions as rows. Instant querying, efficient storage.
+
+### 8.2 Base64 Serialization Logic
+When `include_binary_base64` is True:
+1. The chunker reads the file as raw bytes.
+2. Converts bytes to an ASCII string via Base64.
+3. Marks `is_base64 = True` in the row.
+4. On unchunk, the engine reverses this, writing raw bytes back to disk.
+- **Note:** This increases file size by approx 33% but ensures 100% portability.
+
+### 8.3 Exclusion Logic
+The scanning engine uses a "pruning" walk:
+- It removes excluded directories from the walk list before entering them.
+- This prevents the system from even scanning large folders like `.git`, making the process highly performant.
+
+---
+
+## 9. Version Migration & Compatibility
+
+### 9.1 Upgrading from v5 to v6
+- v6 is fully backwards compatible with v5 MFDB files.
+- The `do_validate` and `do_snapshot` features can be run on existing v5 databases immediately.
+- The new `ROOT_ADMIN` library resolution replaces the deprecated `env_libs` module.
+
+### 9.2 Semantic Versioning Rules
+The system enforces `MAJOR.MINOR.PATCH` format.
+- **PATCH:** Bug fixes, non-breaking changes.
+- **MINOR:** New features, additions.
+- **MAJOR:** Breaking changes, structural refactors.
+
+---
+
+## 10. Troubleshooting & v6 Diagnostics
+
+### 10.1 Global Error Interceptor
+The v6 Dashboard includes a global `window.onerror` handler. If a front-end crash occurs, a red alert will appear in the log box with the exact JS line number and message.
+
+### 10.2 Common Scenarios & Fixes
+- **`ModuleNotFoundError: No module named 'env_libs'`**: Fixed in v6.0.0 by using the standardized `ROOT_ADMIN` bootstrap. Ensure you are running the latest `mfdb_chunker_app.py`.
+- **`CRITICAL CHUNK ERROR`**: Usually caused by file permission issues in Termux. Run `termux-setup-storage` and ensure the script has write access to the target and output directories.
+- **`JS ERROR (Line 0)`**: Check if the browser has JavaScript enabled or if an extension is blocking local AJAX calls.
+- **`Validation error: Manifest not found`**: Ensure you provided the correct path to the `104a.mfdb.bejson` file, not just the directory.
+
+---
+
+## 11. API Reference (Internal Web Services)
+
+The Flask app exposes the following internal endpoints for GUI interaction:
+- `GET /api/ls?path=...`: Returns JSON directory listing for the file browser.
+- `POST /api/chunk`: Executes the chunking engine with changelog and tags.
+- `POST /api/validate`: Runs the integrity checker on the selected project.
+- `POST /api/snapshot`: Triggers a full zip backup of the project MFDB.
+- `GET /api/view-files`: Returns metadata for files within a specific chunked version.
+- `POST /api/bump`: Increments the version in the project's config file.
+- `POST /api/unchunk`: Restores a specific version back to the project folder.
+
+---
+
+## 12. Frequently Asked Questions (FAQ)
+
+**Q: Can I chunk a project located on my SD card?**
+A: Yes. Use the interactive File Selector to navigate to your specific mount point (usually `/storage/sdcard1`).
+
+**Q: Does chunking replace Git?**
+A: No. MFDB Chunker is designed for **relational archiving** and **AI-agent ingestion**. It complements Git by providing a tabular, machine-readable history of your codebase that agents can query as a database.
+
+**Q: What is the maximum size of a chunked project?**
+A: The system is tested with projects up to 500MB. For larger codebases, we recommend excluding heavy binary assets and using the Base64 toggle judiciously.
+
+**Q: Can I manually edit the BEJSON files?**
+A: Yes, provided you maintain **positional integrity**. We recommend using the `bejson_writer.py` tool for any manual modifications to ensure the schema remains valid.
+
+---
+
+## 13. Conclusion
+MFDB Chunker v6.0.0 is the definitive standard for codebase serialization in 2026. By unifying version control, data integrity, and high-fidelity GUI experiences, it empowers developers to manage their code as a relational asset rather than a loose collection of files.
+
+---
+**Document Version:** 1.2.0  
+**Date:** Sunday, May 24, 2026  
+**Release:** v6.0.0 OFFICIAL PRO  
+**Author:** Elton Boehnen  
+**Site:** [boehnenelton2024.pages.dev](https://boehnenelton2024.pages.dev)  
+**GitHub:** [github.com/boehnenelton/mfdb-chunker](https://github.com/boehnenelton/mfdb-chunker)
+
+---
+*Created with Gemini CLI for the BEJSON Ecosystem.*

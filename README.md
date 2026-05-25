@@ -1,95 +1,62 @@
 # MFDB Chunker v6.0.0
 **MFDB Spec v1.31 · BEJSON Library Family v2.0.1 OFFICIAL**
-Author: Elton Boehnen · boehnenelton2024.pages.dev · [github.com/boehnenelton/mfdb-chunker](https://github.com/boehnenelton/mfdb-chunker) · boehnenelton2024@gmail.com
+Author: Elton Boehnen · boehnenelton2024.pages.dev · [github.com/boehnenelton/mfdb-chunker](https://github.com/boehnenelton/mfdb-chunker)
 
 ---
 
-## Overview
-The **MFDB Chunker** is the authoritative system for converting codebases into AI-optimized, tabular **BEJSON (104/104db)** and **MFDB** formats. Version 5 represents the complete remediation of the BEJSON ecosystem, integrating unified error registries, environment management, and authoritative schema enforcement.
+## 🚀 Overview
+The **MFDB Chunker** is the authoritative system for converting codebases into AI-optimized, tabular **BEJSON (104/104db)** and **MFDB** formats. Version 6.0.0 represents a major leap in reliability and usability, introducing integrated snapshots, point-in-time recovery, and an interactive dashboard with a visual file selector.
+
+### Key Capabilities:
+- **Relational Archiving:** Store unlimited versions of a codebase as rows in a single, high-performance BEJSON entity file.
+- **Lostless Binary Storage:** Optional Base64 encoding for binaries (images, zips) ensuring 100% data fidelity during serialization.
+- **Snapshot Backups (v6):** Create full ZIP snapshots of the entire MFDB project for secondary archival safety.
+- **Integrity Validation (v6):** Automated cross-checking between manifest records and actual entity data to detect corruption or missing files.
+- **Web UI Dashboard (v6):** Interactive Flask-based GUI with mobile optimization and real-time activity feedback.
+- **Interactive File Selector (v6):** Visual browser for internal storage and SD cards to select project directories effortlessly.
 
 ---
 
-## What's New in v6.0.0
+## 🛠️ Quick Start
 
-- **Integrated Snapshot Backups** — Create point-in-time zip backups of the entire MFDB project directory for secondary archival safety.
-- **DB Integrity Validation** — Automated manifest/entity cross-check to detect row count mismatches or missing data files.
-- **UI: File Tree Preview** — Inspect the contents of a chunked version (file paths, types) without unchunking to disk.
-- **UI: Project Removal** — Cleanly remove stale project references from the sidebar dashboard.
-- **Enhanced GUI** — Improved mobile responsiveness and larger, more accessible sidebar controls.
-
-## What's New in v5.0.0
-
-- **Authoritative Repository** — Moved to [boehnenelton/mfdb-chunker](https://github.com/boehnenelton/mfdb-chunker).
-- **Official BEJSON Library v2.0.1** — All Core libs upgraded to the remediated 2026-05-21 release.
-- **Unified Schema Registry** — Integrated `lib_bejson_schema.py` for rigid validation of Chunker v5 entities and manifests.
-- **Environment Awareness** — Uses `lib_bejson_env.py` to resolve paths via the MFDB Layer Registry.
-- **Stale-lock Override** — `bejson_core_acquire_lock` now auto-clears locks older than 60s.
-- **Unified Error Codes** — All system events mapped to the BEJSON Unified Error Registry (codes 1–289).
-
----
-
-## Coming Soon
-
-- **MFDB Snapshot Backups** — point-in-time snapshot packs for fast rollback safety.
-- **Time Machine Restoration** — restore database state to selected historical checkpoints.
-
----
-
-## Usage
-
-### Flask UI (Desktop/Mobile)
+### 1. Installation
+Ensure you have Python 3.10+ and Flask installed:
 ```bash
-python mfdb_chunker_app.py
+pip install flask
 ```
-Auto-selects a free port (5100–5120). UI provides a dashboard for visual project selection, version bumping, and chunking operations.
 
-### CLI
+### 2. Launch the Dashboard
+Run the Flask application to manage your projects visually:
 ```bash
-# Chunk a project
-python mfdb_chunker.py --chunk  ./MyProject
+python3 mfdb_chunker_app.py
+```
+Visit `http://localhost:5100` (or the port displayed in your terminal) to begin.
 
-# Chunk with metadata
-python mfdb_chunker.py --chunk  ./MyProject --changelog "Fix" --tags "stable,release"
+### 3. CLI Basic Usage
+For terminal-centric workflows, use `mfdb_chunker.py`:
+```bash
+# Chunk a directory into a new version
+python3 mfdb_chunker.py --chunk /path/to/project --changelog "Initial commit"
 
-# Versioning
-python mfdb_chunker.py --bump   ./MyProject --bump-part minor
+# Restore a specific version to disk
+python3 mfdb_chunker.py --unchunk /path/to/manifest.bejson --version "1.0.0"
 
-# Operations
-python mfdb_chunker.py --list   ./output/MyProject_MFDB/104a.mfdb.bejson
-python mfdb_chunker.py --unchunk ./output/MyProject_MFDB/104a.mfdb.bejson --version 1.0.0
-python mfdb_chunker.py --export ./output/MyProject_MFDB/104a.mfdb.bejson --version 1.0.0 --out ./v1.mfdb.zip
+# Create a snapshot zip
+python3 mfdb_chunker.py --snapshot /path/to/project
 
-# Template snapshots (stored in output/<project>_MFDB/templates/)
-python mfdb_chunker.py --chunk-template ./MyProject --template-name baseline_ui
-python mfdb_chunker.py --unchunk-template ./MyProject --template-name baseline_ui
+# Validate MFDB integrity
+python3 mfdb_chunker.py --validate /path/to/manifest.bejson
 ```
 
 ---
 
-## Package Structure
+## 📜 Compliance
+- **MFDB Spec:** v1.31
+- **BEJSON Standards:** 104, 104a, 104db
+- **Library Jurisdiction:** `BEJSON_LIBRARIES`
 
-```
-mfdb_chunker/
-├── mfdb_chunker.py
-├── mfdb_chunker_app.py
-├── README.md
-├── DOCUMENTATION.md
-└── lib/
-    ├── lib_bejson_core.py           v2.0.1 OFFICIAL
-    ├── lib_bejson_validator.py      v2.0.1 OFFICIAL
-    ├── lib_bejson_parse.py          v2.0.1 OFFICIAL
-    ├── lib_bejson_errors.py         v2.0.1 OFFICIAL  ← NEW
-    ├── lib_bejson_env.py            v2.0.1 OFFICIAL  ← NEW
-    ├── lib_bejson_schema.py         v2.0.1 OFFICIAL  ← NEW
-    ├── lib_bejson_state_management.py v2.0.1 OFFICIAL ← NEW
-    ├── lib_bejson_provider.py       v2.0.1 OFFICIAL
-    ├── lib_bejson_server.py         v2.0.1 OFFICIAL
-    ├── lib_bejson_static_backend.py v2.0.1 OFFICIAL
-    ├── lib_be_core.py               v2.0.1 OFFICIAL
-    ├── lib_mfdb_core.py             v2.0.1 OFFICIAL
-    ├── lib_mfdb_validator.py        v2.0.1 OFFICIAL
-    └── lib_mfdb_extensions.py       v2.0.1 OFFICIAL  ← NEW
-```
+For exhaustive technical details, schema examples, and API references, please see [DOCUMENTATION.md](./DOCUMENTATION.md).
 
 ---
-*Created by Elton Boehnen | 2026-05-21*
+*MFDB Chunker is a project by Elton Boehnen.*
+*boehnenelton2024.pages.dev · github.com/boehnenelton · boehnenelton2024@gmail.com*
