@@ -217,8 +217,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);min-height:100
 
 @media (max-width: 768px) {
   .mobile-header{display:flex}
-  .shell{display:block}
-  .sidebar{position:fixed;top:0;left:-260px;height:100vh;z-index:1200;transition:left 0.3s ease;box-shadow:5px 0 15px rgba(0,0,0,0.5)}
+  .shell{display:block; padding-bottom:100px}
+  .sidebar{position:fixed;top:0;left:-260px;height:100vh;z-index:1200;transition:left 0.3s ease;box-shadow:5px 0 15px rgba(0,0,0,0.5); padding-bottom:100px}
   .sidebar.open{left:0}
   .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1150}
   .sidebar-overlay.open{display:block}
@@ -236,7 +236,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);min-height:100
 /* Browser Modal */
 .browser-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;align-items:center;justify-content:center}
 .browser-modal.open{display:flex}
-.browser-box{background:var(--surface);border:1px solid var(--border);border-radius:6px;width:90%;max-width:500px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.5)}
+.browser-box{background:var(--surface);border:1px solid var(--border);border-radius:6px;width:95%;max-width:500px;max-height:75vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.5); margin-bottom:100px}
 .browser-head{padding:16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:#1a1a1a}
 .browser-head h2{font-family:var(--mono);font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--red)}
 .browser-nav{padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
