@@ -232,6 +232,33 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);min-height:100
   .vtable th:nth-child(2), .vtable td:nth-child(2),
   .vtable th:nth-child(3), .vtable td:nth-child(3) { display: none; } /* Hide minor columns on mobile */
 }
+
+/* Browser Modal */
+.browser-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:2000;align-items:center;justify-content:center}
+.browser-modal.open{display:flex}
+.browser-box{background:var(--surface);border:1px solid var(--border);border-radius:6px;width:90%;max-width:500px;max-height:80vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,0.5)}
+.browser-head{padding:16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:#1a1a1a}
+.browser-head h2{font-family:var(--mono);font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--red)}
+.browser-nav{padding:8px 16px;background:var(--bg);border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center}
+.browser-path{flex:1;font-family:var(--mono);font-size:10px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.browser-list{flex:1;overflow-y:auto;padding:4px 0}
+.browser-item{padding:8px 16px;cursor:pointer;display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:11px;border-bottom:1px solid #1a1a1a}
+.browser-item:hover{background:#1a1a1a}
+.browser-item.dir{color:#7ab0e8}
+.browser-item.file{color:var(--sub)}
+.browser-item .icon{width:16px;text-align:center;font-size:12px}
+.browser-footer{padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:#1a1a1a}
+
+.browse-btn{background:var(--border);color:var(--text);border:none;padding:7px 10px;font-family:var(--mono);font-size:10px;border-radius:0 3px 3px 0;cursor:pointer;transition:background .2s}
+.browse-btn:hover{background:#333;color:#fff}
+.input-group{display:flex;width:100%}
+.input-group input{border-radius:3px 0 0 3px !important;border-right:none !important}
+
+/* Storage Toggles */
+.storage-toggle{display:flex;gap:10px;margin-bottom:10px}
+.storage-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:4px 8px;font-size:9px;font-family:var(--mono);cursor:pointer;border-radius:3px;text-transform:uppercase}
+.storage-btn.active{border-color:var(--red);color:var(--red);background:rgba(222,38,38,0.05)}
+
 </style>
 </head>
 <body>
@@ -264,7 +291,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--ui);min-height:100
   </div>
   <div class="add-project-form">
     <p>Add Project</p>
-    <input type="text" id="newProjectPath" placeholder="/path/to/project">
+    <div class="input-group"><input type="text" id="newProjectPath" placeholder="/path/to/project"><button class="browse-btn" onclick="openBrowser()">BROWSE</button></div>
     <button onclick="addProject()">+ ADD</button>
     <button class="sync-btn" onclick="syncRegistry()">↻ Sync from Registry</button>
   </div>
@@ -508,7 +535,76 @@ async function exportVer(ver) {
   }).then(r => r.json());
   if (r.ok) window.location.href = '/api/download-export?path=' + encodeURIComponent(r.zip_path);
 }
+
+let browserPath = '/storage/emulated/0';
+function openBrowser() {
+  document.getElementById('browserModal').classList.add('open');
+  browseTo(browserPath);
+}
+function closeBrowser() {
+  document.getElementById('browserModal').classList.remove('open');
+}
+async function browseTo(path) {
+  browserPath = path;
+  document.getElementById('browserCurrentPath').textContent = path;
+  
+  // Update storage buttons
+  document.getElementById('btn-internal').classList.toggle('active', path.startsWith('/storage/emulated/0'));
+  document.getElementById('btn-sd').classList.toggle('active', path.startsWith('/storage/sdcard1'));
+
+  const list = document.getElementById('browserList');
+  list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:10px;font-family:var(--mono)">LOADING...</div>';
+  
+  try {
+    const r = await fetch('/api/ls?path=' + encodeURIComponent(path)).then(r => r.json());
+    if (r.ok) {
+      list.innerHTML = '';
+      r.items.forEach(item => {
+        const div = document.createElement('div');
+        div.className = 'browser-item ' + (item.is_dir ? 'dir' : 'file');
+        div.innerHTML = `<span class="icon">${item.is_dir ? '📁' : '📄'}</span><span>${item.name}</span>`;
+        div.onclick = () => {
+          if (item.is_dir) browseTo(item.path);
+        };
+        list.appendChild(div);
+      });
+    } else {
+      list.innerHTML = '<div style="padding:20px;color:var(--red);font-size:10px;font-family:var(--mono)">ERROR: ' + r.message + '</div>';
+    }
+  } catch(e) {
+    list.innerHTML = '<div style="padding:20px;color:var(--red);font-size:10px;font-family:var(--mono)">NETWORK ERROR</div>';
+  }
+}
+function confirmBrowserSelection() {
+  document.getElementById('newProjectPath').value = browserPath;
+  closeBrowser();
+}
+
 </script>
+
+<div class="browser-modal" id="browserModal">
+  <div class="browser-box">
+    <div class="browser-head">
+      <h2>File Selector</h2>
+      <button class="btn-ghost btn-small" onclick="closeBrowser()" style="padding:2px 8px;border:none;font-size:16px">×</button>
+    </div>
+    <div class="browser-nav">
+      <div class="storage-toggle">
+        <button class="storage-btn active" id="btn-internal" onclick="browseTo('/storage/emulated/0')">Internal</button>
+        <button class="storage-btn" id="btn-sd" onclick="browseTo('/storage/sdcard1')">SD Card</button>
+      </div>
+      <div class="browser-path" id="browserCurrentPath">/storage/emulated/0</div>
+    </div>
+    <div class="browser-list" id="browserList">
+      <!-- Items populated by JS -->
+    </div>
+    <div class="browser-footer">
+      <button class="btn btn-ghost btn-small" onclick="closeBrowser()">CANCEL</button>
+      <button class="btn btn-primary btn-small" onclick="confirmBrowserSelection()">SELECT FOLDER</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
 """
@@ -635,6 +731,29 @@ def api_view_files():
     config = load_or_create_config(Path(project["path"]))
     files = get_version_files(str(get_manifest_path(config)), ver)
     return jsonify({"ok":True, "files": files})
+
+
+@app.route("/api/ls")
+def api_ls():
+    path = request.args.get("path", "/storage/emulated/0")
+    try:
+        p = Path(path).resolve()
+        if not p.exists(): return jsonify({"ok":False, "message":"Path not found"})
+        
+        items = []
+        # Add parent dir first if not at root
+        if str(p) != "/":
+            items.append({"name": "..", "is_dir": True, "path": str(p.parent)})
+
+        for entry in sorted(os.scandir(p), key=lambda e: (not e.is_dir(), e.name.lower())):
+            items.append({
+                "name": entry.name,
+                "is_dir": entry.is_dir(),
+                "path": entry.path
+            })
+        return jsonify({"ok":True, "path": str(p), "items": items})
+    except Exception as e:
+        return jsonify({"ok":False, "message": str(e)})
 
 if __name__ == "__main__":
     port = 5100
